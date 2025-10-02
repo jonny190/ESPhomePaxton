@@ -38,7 +38,7 @@ class PaxtonReader : public Component, public EntityBase {
 
  protected:
   static void IRAM_ATTR isr_trampoline(PaxtonReader *self);
-  void IRAM_ATTR on_clock_falling();
+  void on_clock_falling();
   void pulse_led(GPIOPin *pin, uint32_t ms);
 
   volatile uint16_t bit_count_{0};

@@ -31,9 +31,11 @@ void PaxtonReader::setup() {
   if (led_yellow_) led_yellow_->setup();
   if (led_red_) led_red_->setup();
 
-  gpio::attach_interrupt(clock_pin_->get_pin(), gpio::INTERRUPT_FALLING,
-                         (void (*)(void*)) &PaxtonReader::isr_trampoline, this);
-  ESP_LOGI("paxton", "Paxton reader ready.");
+  clock_pin_->attach_interrupt(
+  (void (*)(void*)) &PaxtonReader::isr_trampoline,   // callback
+  this,                                              // arg
+  gpio::INTERRUPT_FALLING_EDGE                       // type
+);
 }
 
 void PaxtonReader::pulse_led(GPIOPin *pin, uint32_t ms) {
