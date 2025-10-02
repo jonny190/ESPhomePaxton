@@ -1,48 +1,46 @@
 #include "paxton_reader.h"
 
-using esphome::binary_sensor::BinarySensor;
-using esphome::sensor::Sensor;
-using esphome::text_sensor::TextSensor;
-
 namespace esphome {
 namespace paxton {
 
-void IRAM_ATTR PaxtonReader::isr_trampoline(PaxtonReader *self) { self->on_clock_falling(); }
+void IRAM_ATTR PaxtonReader::isr_trampoline(void *arg) {
+  static_cast<PaxtonReader*>(arg)->on_clock_falling();
+}
 
 void IRAM_ATTR PaxtonReader::on_clock_falling() {
   const uint32_t now = micros();
   if (now - last_edge_us_ < debounce_us) return;
   last_edge_us_ = now;
   if (processing_) return;
-  const bool level = data_pin_->digital_read();
+  const bool level = digitalRead(data_pin_);
   if (bit_count_ < sizeof(bits_)) bits_[bit_count_++] = level ? 1 : 0;
   else processing_ = true;
 }
 
 void PaxtonReader::setup() {
-  if (!clock_pin_ || !data_pin_) {
+  if (clock_pin_ < 0 || data_pin_ < 0) {
     ESP_LOGE("paxton", "Pins not configured");
     return;
   }
-  clock_pin_->setup();  data_pin_->setup();
-  clock_pin_->pin_mode(gpio::FLAG_INPUT);
-  data_pin_->pin_mode(gpio::FLAG_INPUT);
-  if (led_green_) led_green_->setup();
-  if (led_yellow_) led_yellow_->setup();
-  if (led_red_) led_red_->setup();
 
-  clock_pin_->attach_interrupt(
-  (void (*)(void*)) &PaxtonReader::isr_trampoline,   // callback
-  this,                                              // arg
-  gpio::INTERRUPT_FALLING_EDGE                       // type
-);
+  pinMode(clock_pin_, INPUT);
+  pinMode(data_pin_, INPUT);
+
+  if (led_green_ >= 0) pinMode(led_green_, OUTPUT);
+  if (led_yellow_ >= 0) pinMode(led_yellow_, OUTPUT);
+  if (led_red_ >= 0) pinMode(led_red_, OUTPUT);
+
+  // Attach ISR on falling edge of CLOCK
+  attachInterruptArg(clock_pin_, &PaxtonReader::isr_trampoline, this, FALLING);
+
+  ESP_LOGI("paxton", "Paxton reader ready (Arduino ISR).");
 }
 
-void PaxtonReader::pulse_led(GPIOPin *pin, uint32_t ms) {
-  if (!pin) return;
-  pin->digital_write(true);
+void PaxtonReader::pulse_led_(int pin, uint32_t ms) {
+  if (pin < 0) return;
+  digitalWrite(pin, HIGH);
   delay(ms);
-  pin->digital_write(false);
+  digitalWrite(pin, LOW);
 }
 
 bool PaxtonReader::check_leadin_10zeros_ending_one_() const {
@@ -67,7 +65,7 @@ bool PaxtonReader::parse_net2_(std::string &card_no, std::string &bin) {
   for (int i = 0; i < n; i++) bin.push_back(bits_[i] ? '1' : '0');
 
   card_no.clear();
-  int idx = 11; // after 'b'
+  int idx = 11;
   for (int d = 0; d < 8; d++) {
     if (idx + 3 >= n) return false;
     int val = (bits_[idx] << 3) | (bits_[idx+1] << 2) | (bits_[idx+2] << 1) | (bits_[idx+3]);
@@ -110,7 +108,7 @@ void PaxtonReader::publish_success_(const std::string &card_no,
   if (card_colour_ts) card_colour_ts->publish_state(colour);
   if (bit_count_s) bit_count_s->publish_state(bits);
   if (reading_bs) reading_bs->publish_state(true);
-  if (led_green_) pulse_led(led_green_, 80);
+  if (led_green_ >= 0) pulse_led_(led_green_, 80);
   if (reading_bs) reading_bs->publish_state(false);
   ESP_LOGI("paxton", "Card: %s | Type: %s | Colour: %s | Bits: %u",
            card_no.c_str(), type.c_str(), colour.c_str(), (unsigned)bits);
@@ -120,7 +118,7 @@ void PaxtonReader::publish_error_(const char *msg) {
   if (card_type_ts) card_type_ts->publish_state("Error");
   if (last_card_ts) last_card_ts->publish_state(msg);
   if (bit_count_s) bit_count_s->publish_state((float) bit_count_);
-  if (led_red_) pulse_led(led_red_, 120);
+  if (led_red_ >= 0) pulse_led_(led_red_, 120);
   ESP_LOGW("paxton", "Parse error: %s (bits=%u)", msg, (unsigned)bit_count_);
 }
 
@@ -148,7 +146,7 @@ void PaxtonReader::loop() {
       bit_count_ = 0;
       processing_ = false;
       idle_since = millis();
-      if (!ok && led_yellow_) pulse_led(led_yellow_, 80);
+      if (!ok && led_yellow_ >= 0) pulse_led_(led_yellow_, 80);
     }
   } else {
     if (millis() - idle_since > 5000) {
