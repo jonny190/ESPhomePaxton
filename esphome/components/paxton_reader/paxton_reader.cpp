@@ -178,16 +178,15 @@ void PaxtonReader::loop() {
       if (n == net2_bits) {
         ok = parse_net2_(card_no, bin);
         if (!ok) {
-          // Heuristic fallback: often succeeds where strict parser hasn't been wired yet
-          if (try_heuristic_bcd_(card_no)) {
-            publish_success_(card_no, "Net2 (heuristic)", "None", n, bin);
+          if (try_adaptive_bcd_(card_no)) {
+            publish_success_(card_no, "Net2 (adaptive)", "None", n, bin);
             ok = true;
           } else {
             publish_error_("Net2 parse fail");
           }
-        } else {
-          publish_success_(card_no, "Net2", "None", n, bin);
-        }
+} else {
+  publish_success_(card_no, "Net2", "None", n, bin);
+}
       } else if (n == switch2_bits) {
         ok = parse_switch2_(card_no, colour, bin);
         if (ok) publish_success_(card_no, "Switch2 Knockout", colour, n, bin);
@@ -207,6 +206,71 @@ void PaxtonReader::loop() {
       idle_since = millis();
     }
   }
+}
+
+// ---------------- Adaptive BCD fallback ----------------
+// We try several plausible Net2 layouts:
+//  - grouped 5 bits (4-bit BCD + 1 parity), various start offsets
+//  - grouped 4 bits (tight BCD), various start offsets
+//  - nibble bit-order MSB->LSB or reversed
+//  - forward or reversed overall bit order (in case read order is flipped)
+//
+// Returns 8 digits if any layout fits strictly (all nibbles 0..9).
+bool PaxtonReader::try_adaptive_bcd_(std::string &out) {
+  const int N = bit_count_;
+  auto get_bit = [&](int i, bool reverse) -> uint8_t {
+    return reverse ? bits_[N - 1 - i] : bits_[i];
+  };
+
+  auto nibble_val = [&](int start, bool reverse_stream, bool reverse_nibble) -> int {
+    uint8_t b0 = get_bit(start + 0, reverse_stream);
+    uint8_t b1 = get_bit(start + 1, reverse_stream);
+    uint8_t b2 = get_bit(start + 2, reverse_stream);
+    uint8_t b3 = get_bit(start + 3, reverse_stream);
+    if (reverse_nibble) std::swap(b0, b3), std::swap(b1, b2);
+    return (b0 << 3) | (b1 << 2) | (b2 << 1) | (b3 << 0);
+  };
+
+  // Candidate parameter sets to try
+  struct Try { int start; int group; bool rev_stream; bool rev_nibble; };
+  std::vector<Try> tries;
+
+  // Typical Net2 start right after 10 zeros + 1 = index 11.
+  // Try a small window around it.
+  for (int s : {11, 12, 13, 14, 15}) {
+    for (bool rs : {false, true}) {
+      for (bool rn : {false, true}) {
+        // group=5 => BCD+parity; group=4 => tight BCD
+        tries.push_back({s, 5, rs, rn});
+        tries.push_back({s, 4, rs, rn});
+      }
+    }
+  }
+
+  // Try each layout
+  for (const auto &t : tries) {
+    int idx = t.start;
+    std::string digits;
+    digits.reserve(8);
+    bool ok = true;
+
+    for (int d = 0; d < 8; d++) {
+      // enough room?
+      if (idx + 3 >= N) { ok = false; break; }
+      int val = nibble_val(idx, t.rev_stream, t.rev_nibble);
+      if (val > 9) { ok = false; break; }
+      digits.push_back(char('0' + val));
+      idx += (t.group == 5 ? 5 : 4);  // skip parity if group=5
+    }
+
+    if (ok && (int)digits.size() == 8) {
+      out = digits;
+      ESP_LOGD("paxton", "Adaptive BCD matched: start=%d group=%d rev_stream=%s rev_nibble=%s -> %s",
+               t.start, t.group, t.rev_stream?"yes":"no", t.rev_nibble?"yes":"no", out.c_str());
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace paxton

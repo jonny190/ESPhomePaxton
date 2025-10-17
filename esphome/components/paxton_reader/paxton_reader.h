@@ -75,7 +75,7 @@ class PaxtonReader : public Component {
   bool check_leadout_10zeros_() const;
 
   // Heuristic BCD (fallback for Net2)
-  bool try_heuristic_bcd_(std::string &card_out);
+  bool try_adaptive_bcd_(std::string &card_out);
 
   bool parse_net2_(std::string &card_no, std::string &bin);
   bool parse_switch2_(std::string &card_no, std::string &colour, std::string &bin);
