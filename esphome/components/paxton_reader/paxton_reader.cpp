@@ -66,22 +66,6 @@ bool PaxtonReader::check_leadout_10zeros_() const {
   return true;
 }
 
-// Pragmatic fallback: treat each 5-bit group as 4-bit BCD + 1 parity bit.
-// Start after lead-in (10 zeros + '1'), take 8 digits.
-bool PaxtonReader::try_heuristic_bcd_(std::string &card_out) {
-  int idx = 11;
-  const int n = bit_count_;
-  std::string digits;
-  while (idx + 4 < n && (int)digits.size() < 8) {
-    int val = (bits_[idx] << 3) | (bits_[idx+1] << 2) | (bits_[idx+2] << 1) | (bits_[idx+3]);
-    if (val > 9) return false;
-    digits.push_back(char('0' + val));
-    idx += 5;  // skip presumed parity bit
-  }
-  if (digits.size() == 8) { card_out = digits; return true; }
-  return false;
-}
-
 bool PaxtonReader::parse_net2_(std::string &card_no, std::string &bin) {
   const uint16_t n = bit_count_;
   if (n != net2_bits) return false;
@@ -184,9 +168,9 @@ void PaxtonReader::loop() {
           } else {
             publish_error_("Net2 parse fail");
           }
-} else {
-  publish_success_(card_no, "Net2", "None", n, bin);
-}
+        } else {
+          publish_success_(card_no, "Net2", "None", n, bin);
+        }
       } else if (n == switch2_bits) {
         ok = parse_switch2_(card_no, colour, bin);
         if (ok) publish_success_(card_no, "Switch2 Knockout", colour, n, bin);
