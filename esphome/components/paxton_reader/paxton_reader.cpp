@@ -47,11 +47,11 @@ void PaxtonReader::log_bits_preview_(uint16_t n) {
            (unsigned)n, (unsigned)(show-1), s.c_str(), n>show?"...":"");
 }
 
-void PaxtonReader::pulse_led_(int pin, uint32_t ms) {
+void PaxtonReader::led_on_for_(int pin, uint32_t ms) {
   if (pin < 0) return;
   digitalWrite(pin, HIGH);
-  delay(ms);
-  digitalWrite(pin, LOW);
+  led_on_pin_ = pin;
+  led_off_at_ms_ = millis() + ms;
 }
 
 bool PaxtonReader::check_leadin_10zeros_ending_one_() const {
@@ -66,6 +66,22 @@ bool PaxtonReader::check_leadout_10zeros_() const {
   return true;
 }
 
+// Pragmatic fallback: treat each 5-bit group as 4-bit BCD + 1 parity bit.
+// Start after lead-in (10 zeros + '1'), take 8 digits.
+bool PaxtonReader::try_heuristic_bcd_(std::string &card_out) {
+  int idx = 11;
+  const int n = bit_count_;
+  std::string digits;
+  while (idx + 4 < n && (int)digits.size() < 8) {
+    int val = (bits_[idx] << 3) | (bits_[idx+1] << 2) | (bits_[idx+2] << 1) | (bits_[idx+3]);
+    if (val > 9) return false;
+    digits.push_back(char('0' + val));
+    idx += 5;  // skip presumed parity bit
+  }
+  if (digits.size() == 8) { card_out = digits; return true; }
+  return false;
+}
+
 bool PaxtonReader::parse_net2_(std::string &card_no, std::string &bin) {
   const uint16_t n = bit_count_;
   if (n != net2_bits) return false;
@@ -76,6 +92,9 @@ bool PaxtonReader::parse_net2_(std::string &card_no, std::string &bin) {
   for (int i = 0; i < n; i++) bin.push_back(bits_[i] ? '1' : '0');
 
   card_no.clear();
+
+  // NOTE: strict Net2 column/row parity decode from Paxtogeddon will replace this soon.
+  // For now, keep the old "straight BCD" attempt (often fails) and let heuristic kick in.
   int idx = 11;
   for (int d = 0; d < 8; d++) {
     if (idx + 3 >= n) return false;
@@ -119,7 +138,7 @@ void PaxtonReader::publish_success_(const std::string &card_no,
   if (card_colour_ts) card_colour_ts->publish_state(colour);
   if (bit_count_s) bit_count_s->publish_state(bits);
   if (reading_bs) reading_bs->publish_state(true);
-  if (led_green_ >= 0) pulse_led_(led_green_, 80);
+  if (led_green_ >= 0) led_on_for_(led_green_, 60);
   if (reading_bs) reading_bs->publish_state(false);
   ESP_LOGI("paxton", "Card: %s | Type: %s | Colour: %s | Bits: %u",
            card_no.c_str(), type.c_str(), colour.c_str(), (unsigned)bits);
@@ -129,26 +148,46 @@ void PaxtonReader::publish_error_(const char *msg) {
   if (card_type_ts) card_type_ts->publish_state("Error");
   if (last_card_ts) last_card_ts->publish_state(msg);
   if (bit_count_s) bit_count_s->publish_state((float) bit_count_);
-  if (led_red_ >= 0) pulse_led_(led_red_, 120);
+  if (led_red_ >= 0) led_on_for_(led_red_, 100);
   ESP_LOGW("paxton", "Parse error: %s (bits=%u)", msg, (unsigned)bit_count_);
 }
 
 void PaxtonReader::loop() {
   static uint32_t idle_since = millis();
 
+  // Non-blocking LED off
+  if (led_on_pin_ >= 0 && (int32_t)(millis() - led_off_at_ms_) >= 0) {
+    digitalWrite(led_on_pin_, LOW);
+    led_on_pin_ = -1;
+  }
+
   if (bit_count_ > 0) {
-    if ((micros() - last_edge_us_) > frame_gap_us) {   // <-- use configurable gap
+    if ((micros() - last_edge_us_) > frame_gap_us) {   // frame complete
       processing_ = true;
       const uint16_t n = bit_count_;
-      log_bits_preview_(n);                            // <-- show first bits
+      log_bits_preview_(n);
 
-      std::string card_no, colour, bin;
+      // Build full bitstring and publish to HA
+      std::string bin; bin.reserve(n);
+      for (int i = 0; i < n; i++) bin.push_back(bits_[i] ? '1' : '0');
+      if (raw_bits_ts) raw_bits_ts->publish_state(bin);
+
+      std::string card_no, colour;
       bool ok = false;
 
       if (n == net2_bits) {
         ok = parse_net2_(card_no, bin);
-        if (ok) publish_success_(card_no, "Net2", "None", n, bin);
-        else publish_error_("Net2 parse fail");
+        if (!ok) {
+          // Heuristic fallback: often succeeds where strict parser hasn't been wired yet
+          if (try_heuristic_bcd_(card_no)) {
+            publish_success_(card_no, "Net2 (heuristic)", "None", n, bin);
+            ok = true;
+          } else {
+            publish_error_("Net2 parse fail");
+          }
+        } else {
+          publish_success_(card_no, "Net2", "None", n, bin);
+        }
       } else if (n == switch2_bits) {
         ok = parse_switch2_(card_no, colour, bin);
         if (ok) publish_success_(card_no, "Switch2 Knockout", colour, n, bin);
@@ -160,7 +199,7 @@ void PaxtonReader::loop() {
       bit_count_ = 0;
       processing_ = false;
       idle_since = millis();
-      if (!ok && led_yellow_ >= 0) pulse_led_(led_yellow_, 80);
+      if (!ok && led_yellow_ >= 0) led_on_for_(led_yellow_, 60);
     }
   } else {
     if (millis() - idle_since > 5000) {

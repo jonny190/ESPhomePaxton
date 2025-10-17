@@ -20,6 +20,7 @@ CONF_CARD_TYPE = "card_type"
 CONF_CARD_COLOUR = "card_colour"
 CONF_BIT_COUNT = "bit_count"
 CONF_READING = "reading"
+CONF_RAW_BITS = "raw_bits"
 
 CONF_NET2_BITS = "net2_bits"
 CONF_SWITCH2_BITS = "switch2_bits"
@@ -45,6 +46,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Required(CONF_CARD_COLOUR): cv.use_id(text_sensor.TextSensor),
         cv.Required(CONF_BIT_COUNT): cv.use_id(sensor.Sensor),
         cv.Required(CONF_READING): cv.use_id(binary_sensor.BinarySensor),
+        cv.Required(CONF_RAW_BITS): cv.use_id(text_sensor.TextSensor),
 
         cv.Optional(CONF_NET2_BITS, default=75): cv.positive_int,
         cv.Optional(CONF_SWITCH2_BITS, default=220): cv.positive_int,
@@ -53,7 +55,6 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_INVERT_DATA, default=False): cv.boolean,
         cv.Optional(CONF_FRAME_GAP_US, default=4000): cv.positive_int,
         cv.Optional(CONF_USE_PULLUPS, default=True): cv.boolean,
-
     }
 )
 
@@ -74,12 +75,14 @@ async def to_code(config):
     card_colour = await cg.get_variable(config[CONF_CARD_COLOUR])
     bit_count   = await cg.get_variable(config[CONF_BIT_COUNT])
     reading     = await cg.get_variable(config[CONF_READING])
+    raw_bits    = await cg.get_variable(config[CONF_RAW_BITS])
 
     cg.add(var.set_last_card(last_card))
     cg.add(var.set_card_type(card_type))
     cg.add(var.set_card_colour(card_colour))
     cg.add(var.set_bit_count(bit_count))
     cg.add(var.set_reading(reading))
+    cg.add(var.set_raw_bits(raw_bits))
 
     cg.add(var.set_net2_bits(config[CONF_NET2_BITS]))
     cg.add(var.set_switch2_bits(config[CONF_SWITCH2_BITS]))

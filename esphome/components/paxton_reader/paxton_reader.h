@@ -18,6 +18,7 @@ class PaxtonReader : public Component {
   text_sensor::TextSensor *last_card_ts{nullptr};
   text_sensor::TextSensor *card_type_ts{nullptr};
   text_sensor::TextSensor *card_colour_ts{nullptr};
+  text_sensor::TextSensor *raw_bits_ts{nullptr};
   sensor::Sensor *bit_count_s{nullptr};
   binary_sensor::BinarySensor *reading_bs{nullptr};
 
@@ -39,6 +40,7 @@ class PaxtonReader : public Component {
   void set_last_card(text_sensor::TextSensor *p) { last_card_ts = p; }
   void set_card_type(text_sensor::TextSensor *p) { card_type_ts = p; }
   void set_card_colour(text_sensor::TextSensor *p) { card_colour_ts = p; }
+  void set_raw_bits(text_sensor::TextSensor *p) { raw_bits_ts = p; }
   void set_bit_count(sensor::Sensor *p) { bit_count_s = p; }
   void set_reading(binary_sensor::BinarySensor *p) { reading_bs = p; }
 
@@ -58,7 +60,11 @@ class PaxtonReader : public Component {
 
  protected:
   void IRAM_ATTR on_clock_falling();
-  void pulse_led_(int pin, uint32_t ms);
+
+  // Non-blocking LED handling
+  void led_on_for_(int pin, uint32_t ms);
+  int led_on_pin_ = -1;
+  uint32_t led_off_at_ms_ = 0;
 
   volatile uint16_t bit_count_{0};
   volatile bool processing_{false};
@@ -67,6 +73,10 @@ class PaxtonReader : public Component {
 
   bool check_leadin_10zeros_ending_one_() const;
   bool check_leadout_10zeros_() const;
+
+  // Heuristic BCD (fallback for Net2)
+  bool try_heuristic_bcd_(std::string &card_out);
+
   bool parse_net2_(std::string &card_no, std::string &bin);
   bool parse_switch2_(std::string &card_no, std::string &colour, std::string &bin);
 
@@ -79,4 +89,4 @@ class PaxtonReader : public Component {
 };
 
 }  // namespace paxton
-}  // namespace esphhome
+}  // namespace esphome
