@@ -25,6 +25,9 @@ class PaxtonReader : public Component {
   uint16_t net2_bits{75};
   uint16_t switch2_bits{220};
   uint32_t debounce_us{350};
+  uint32_t frame_gap_us{4000};
+  bool invert_data_{false};
+  bool use_pullups_{true};
 
   // Setters (called from codegen)
   void set_clock_pin(int p) { clock_pin_ = p; }
@@ -42,6 +45,11 @@ class PaxtonReader : public Component {
   void set_net2_bits(uint16_t v) { net2_bits = v; }
   void set_switch2_bits(uint16_t v) { switch2_bits = v; }
   void set_debounce_us(uint32_t v) { debounce_us = v; }
+  void set_frame_gap_us(uint32_t v) { frame_gap_us = v; }
+  void set_invert_data(bool v) { invert_data_ = v; }
+  void set_use_pullups(bool v) { use_pullups_ = v; } 
+
+  void log_bits_preview_(uint16_t n);
 
   void setup() override;
   void loop() override;

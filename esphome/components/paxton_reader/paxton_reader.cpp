@@ -12,7 +12,10 @@ void IRAM_ATTR PaxtonReader::on_clock_falling() {
   if (now - last_edge_us_ < debounce_us) return;
   last_edge_us_ = now;
   if (processing_) return;
-  const bool level = digitalRead(data_pin_);
+
+  bool level = digitalRead(data_pin_);
+  if (invert_data_) level = !level;
+
   if (bit_count_ < sizeof(bits_)) bits_[bit_count_++] = level ? 1 : 0;
   else processing_ = true;
 }
@@ -22,18 +25,26 @@ void PaxtonReader::setup() {
     ESP_LOGE("paxton", "Pins not configured");
     return;
   }
+  pinMode(clock_pin_, use_pullups_ ? INPUT_PULLUP : INPUT);
+  pinMode(data_pin_,  use_pullups_ ? INPUT_PULLUP : INPUT);
 
-  pinMode(clock_pin_, INPUT);
-  pinMode(data_pin_, INPUT);
-
-  if (led_green_ >= 0) pinMode(led_green_, OUTPUT);
+  if (led_green_ >= 0)  pinMode(led_green_, OUTPUT);
   if (led_yellow_ >= 0) pinMode(led_yellow_, OUTPUT);
-  if (led_red_ >= 0) pinMode(led_red_, OUTPUT);
+  if (led_red_ >= 0)    pinMode(led_red_, OUTPUT);
 
-  // Attach ISR on falling edge of CLOCK
   attachInterruptArg(clock_pin_, &PaxtonReader::isr_trampoline, this, FALLING);
 
-  ESP_LOGI("paxton", "Paxton reader ready (Arduino ISR).");
+  ESP_LOGI("paxton", "Ready. debounce=%uus frame_gap=%uus invert_data=%s pullups=%s",
+           (unsigned)debounce_us, (unsigned)frame_gap_us,
+           invert_data_ ? "yes" : "no", use_pullups_ ? "yes" : "no");
+}
+
+void PaxtonReader::log_bits_preview_(uint16_t n) {
+  const uint16_t show = std::min<uint16_t>(n, 64);
+  std::string s; s.reserve(show);
+  for (uint16_t i=0;i<show;i++) s.push_back(bits_[i] ? '1' : '0');
+  ESP_LOGD("paxton", "Bits(%u) preview[0..%u]: %s%s",
+           (unsigned)n, (unsigned)(show-1), s.c_str(), n>show?"...":"");
 }
 
 void PaxtonReader::pulse_led_(int pin, uint32_t ms) {
@@ -124,10 +135,13 @@ void PaxtonReader::publish_error_(const char *msg) {
 
 void PaxtonReader::loop() {
   static uint32_t idle_since = millis();
+
   if (bit_count_ > 0) {
-    if ((micros() - last_edge_us_) > 8000) {
+    if ((micros() - last_edge_us_) > frame_gap_us) {   // <-- use configurable gap
       processing_ = true;
       const uint16_t n = bit_count_;
+      log_bits_preview_(n);                            // <-- show first bits
+
       std::string card_no, colour, bin;
       bool ok = false;
 

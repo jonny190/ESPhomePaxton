@@ -25,6 +25,10 @@ CONF_NET2_BITS = "net2_bits"
 CONF_SWITCH2_BITS = "switch2_bits"
 CONF_DEBOUNCE_US = "debounce_us"
 
+CONF_INVERT_DATA = "invert_data"
+CONF_FRAME_GAP_US = "frame_gap_us"
+CONF_USE_PULLUPS = "use_pullups"
+
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(PaxtonReader),
@@ -45,6 +49,11 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_NET2_BITS, default=75): cv.positive_int,
         cv.Optional(CONF_SWITCH2_BITS, default=220): cv.positive_int,
         cv.Optional(CONF_DEBOUNCE_US, default=350): cv.positive_int,
+
+        cv.Optional(CONF_INVERT_DATA, default=False): cv.boolean,
+        cv.Optional(CONF_FRAME_GAP_US, default=4000): cv.positive_int,
+        cv.Optional(CONF_USE_PULLUPS, default=True): cv.boolean,
+
     }
 )
 
@@ -75,5 +84,9 @@ async def to_code(config):
     cg.add(var.set_net2_bits(config[CONF_NET2_BITS]))
     cg.add(var.set_switch2_bits(config[CONF_SWITCH2_BITS]))
     cg.add(var.set_debounce_us(config[CONF_DEBOUNCE_US]))
+
+    cg.add(var.set_invert_data(config[CONF_INVERT_DATA]))
+    cg.add(var.set_frame_gap_us(config[CONF_FRAME_GAP_US]))
+    cg.add(var.set_use_pullups(config[CONF_USE_PULLUPS]))
 
     await cg.register_component(var, {})
