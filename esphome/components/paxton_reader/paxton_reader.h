@@ -59,7 +59,7 @@ class PaxtonReader : public Component {
   static void IRAM_ATTR isr_trampoline(void *arg);
 
  protected:
-  void IRAM_ATTR on_clock_falling();
+  static void IRAM_ATTR isr_trampoline(void *arg);
 
   // Non-blocking LED handling
   void led_on_for_(int pin, uint32_t ms);
