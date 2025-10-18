@@ -1,6 +1,6 @@
 #pragma once
 #include "esphome.h"
-#include <Arduino.h>
+#include "driver/gpio.h"   // <— IDF GPIO
 
 namespace esphome {
 namespace paxton {
