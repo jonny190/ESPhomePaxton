@@ -1,6 +1,6 @@
 #pragma once
 #include "esphome.h"
-#include "driver/gpio.h"   // <— IDF GPIO
+#include "driver/gpio.h"   // IDF GPIO
 
 namespace esphome {
 namespace paxton {
@@ -49,17 +49,19 @@ class PaxtonReader : public Component {
   void set_debounce_us(uint32_t v) { debounce_us = v; }
   void set_frame_gap_us(uint32_t v) { frame_gap_us = v; }
   void set_invert_data(bool v) { invert_data_ = v; }
-  void set_use_pullups(bool v) { use_pullups_ = v; } 
+  void set_use_pullups(bool v) { use_pullups_ = v; }
 
   void log_bits_preview_(uint16_t n);
 
   void setup() override;
   void loop() override;
 
+  // Single declaration is enough; defined with IRAM in the .cpp
   static void IRAM_ATTR isr_trampoline(void *arg);
 
  protected:
-  static void IRAM_ATTR isr_trampoline(void *arg);
+  // Declare without IRAM here to avoid section attribute conflicts
+  void on_clock_falling();
 
   // Non-blocking LED handling
   void led_on_for_(int pin, uint32_t ms);
@@ -74,7 +76,7 @@ class PaxtonReader : public Component {
   bool check_leadin_10zeros_ending_one_() const;
   bool check_leadout_10zeros_() const;
 
-  // Heuristic BCD (fallback for Net2)
+  // Adaptive/heuristic BCD (fallback for Net2)
   bool try_adaptive_bcd_(std::string &card_out);
 
   bool parse_net2_(std::string &card_no, std::string &bin);
