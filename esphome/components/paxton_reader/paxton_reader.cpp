@@ -247,8 +247,7 @@ bool PaxtonReader::parse_paxton90_(std::string &card_no, std::string &colour, st
   // Data section is bits 11-79 (69 bits)
   // Encoding is complex - try multiple strategies and log ALL valid results
 
-  ESP_LOGD("paxton", "90-bit: Scanning all possible decodings...");
-
+  // Scan all possible decodings for fallback (no longer logged verbosely)
   std::vector<std::string> all_valid;
   struct DecoderResult {
     std::string card;
@@ -303,12 +302,7 @@ bool PaxtonReader::parse_paxton90_(std::string &card_no, std::string &colour, st
     }
   }
 
-  // Log all valid results
-  ESP_LOGI("paxton", "90-bit: Found %d valid decodings:", (int)results.size());
-  for (const auto& r : results) {
-    ESP_LOGI("paxton", "  → %s [start=%d, group=%d, %s]",
-             r.card.c_str(), r.start, r.group, r.lsb ? "LSB" : "MSB");
-  }
+  // Verbose decoding results removed - only log when a decoder succeeds
 
   // Try sequential decoder with skipped positions (for cheap/aftermarket cards)
   // Pattern: [15, 30, 35, 40, 45, 50, 55, 60] - skips positions 20 and 25
