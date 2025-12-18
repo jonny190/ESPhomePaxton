@@ -232,12 +232,18 @@ bool PaxtonReader::parse_paxton90_(std::string &card_no, std::string &colour, st
              r.card.c_str(), r.start, r.group, r.lsb ? "LSB" : "MSB");
   }
 
-  // Return the first result for now (user will tell us which is correct)
+  // Try adaptive BCD (same as Net2) as fallback - Net2 uses column/row parity
+  if (try_adaptive_bcd_(card_no)) {
+    ESP_LOGI("paxton", "90-bit: Adaptive BCD succeeded: %s", card_no.c_str());
+    colour = "None";
+    return true;
+  }
+
+  // Return the first simple result if adaptive failed
   if (!results.empty()) {
     card_no = results[0].card;
     colour = "None";
-    ESP_LOGW("paxton", "90-bit: Using first result: %s (may be incorrect!)", card_no.c_str());
-    ESP_LOGW("paxton", "90-bit: Please check logs above and report which decoding matches your card!");
+    ESP_LOGW("paxton", "90-bit: Using first simple result: %s (may be incorrect!)", card_no.c_str());
     return true;
   }
 
@@ -353,7 +359,12 @@ bool PaxtonReader::try_adaptive_bcd_(std::string &out) {
   struct Try { int start; int group; bool rev_stream; bool rev_nibble; };
   std::vector<Try> tries;
 
-  for (int s : {11, 12, 13, 14, 15}) {
+  // For 90-bit cards, try wider range of start positions
+  std::vector<int> start_positions = (N == 90) ?
+    std::vector<int>{11, 12, 13, 14, 15, 16, 17, 18, 19, 20} :
+    std::vector<int>{11, 12, 13, 14, 15};
+
+  for (int s : start_positions) {
     for (bool rs : {false, true}) {
       for (bool rn : {false, true}) {
         tries.push_back({s, 5, rs, rn});  // BCD+parity
