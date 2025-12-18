@@ -336,11 +336,19 @@ bool PaxtonReader::parse_paxton90_(std::string &card_no, std::string &colour, st
     }
   }
 
-  if (cheap_valid && cheap_result.length() == 8) {
+  // Reject results starting with "01", "02", "03" which are likely incorrect decodings
+  bool starts_with_invalid = cheap_result.length() >= 2 &&
+                             cheap_result[0] == '0' &&
+                             (cheap_result[1] >= '1' && cheap_result[1] <= '3');
+
+  if (cheap_valid && cheap_result.length() == 8 && !starts_with_invalid) {
     ESP_LOGI("paxton", "90-bit: Sequential decoder (cheap cards) succeeded: %s", cheap_result.c_str());
     card_no = cheap_result;
     colour = "None";
     return true;
+  } else if (cheap_valid && cheap_result.length() == 8 && starts_with_invalid) {
+    ESP_LOGD("paxton", "90-bit: Sequential decoder result '%s' rejected (starts with 01/02/03), trying Switch2 Fob decoder",
+             cheap_result.c_str());
   }
 
   // Try Switch2 Fob-style interleaved decoding (for official Paxton 90-bit cards)
