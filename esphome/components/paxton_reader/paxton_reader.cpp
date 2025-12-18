@@ -343,6 +343,39 @@ bool PaxtonReader::parse_paxton90_(std::string &card_no, std::string &colour, st
     return true;
   }
 
+  // Try sequential decoder with skipped positions (for cheap/aftermarket cards)
+  // Pattern: [15, 30, 35, 40, 45, 50, 55, 60] - skips positions 20 and 25
+  std::vector<int> cheap_positions = {15, 30, 35, 40, 45, 50, 55, 60};
+  std::string cheap_result;
+  bool cheap_valid = true;
+
+  for (int pos : cheap_positions) {
+    if (pos + 3 < n - 10) {
+      int b0 = bits_[pos];
+      int b1 = bits_[pos+1];
+      int b2 = bits_[pos+2];
+      int b3 = bits_[pos+3];
+      int dval = 8*b3 + 4*b2 + 2*b1 + 1*b0;  // LSB first
+
+      if (dval <= 9) {
+        cheap_result.push_back(char('0' + dval));
+      } else {
+        cheap_valid = false;
+        break;
+      }
+    } else {
+      cheap_valid = false;
+      break;
+    }
+  }
+
+  if (cheap_valid && cheap_result.length() == 8) {
+    ESP_LOGI("paxton", "90-bit: Sequential decoder (cheap cards) succeeded: %s", cheap_result.c_str());
+    card_no = cheap_result;
+    colour = "None";
+    return true;
+  }
+
   // Try proper Net2 decoder with parity checking (from Paxtogeddon)
   // 90-bit format might be extended Net2, try different start positions
   for (int start : {10, 11, 12, 13}) {
