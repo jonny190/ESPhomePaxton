@@ -1,5 +1,6 @@
 #include "paxton_reader.h"
 #include "driver/gpio.h"  // <-- IDF GPIO
+#include <algorithm>      // for std::reverse
 
 namespace esphome {
 namespace paxton {
@@ -196,6 +197,10 @@ bool PaxtonReader::parse_paxton90_(std::string &card_no, std::string &colour, st
 
       if (valid_msb && candidate_msb.length() == 8) {
         results.push_back({candidate_msb, start, group_size, false});
+        // Also try reversed digit order
+        std::string reversed_msb = candidate_msb;
+        std::reverse(reversed_msb.begin(), reversed_msb.end());
+        results.push_back({reversed_msb + " (rev)", start, group_size, false});
       }
 
       // Try LSB first (reversed nibble)
@@ -212,6 +217,10 @@ bool PaxtonReader::parse_paxton90_(std::string &card_no, std::string &colour, st
 
       if (valid_lsb && candidate_lsb.length() == 8) {
         results.push_back({candidate_lsb, start, group_size, true});
+        // Also try reversed digit order
+        std::string reversed_lsb = candidate_lsb;
+        std::reverse(reversed_lsb.begin(), reversed_lsb.end());
+        results.push_back({reversed_lsb + " (rev)", start, group_size, true});
       }
     }
   }
