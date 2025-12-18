@@ -166,51 +166,70 @@ bool PaxtonReader::parse_paxton90_(std::string &card_no, std::string &colour, st
 
   // 90-bit format: 10 zeros + 1 + 69 data bits + 10 zeros
   // Data section is bits 11-79 (69 bits)
-  // Encoding is complex - try multiple strategies
+  // Encoding is complex - try multiple strategies and log ALL valid results
 
-  ESP_LOGD("paxton", "90-bit: Trying experimental decoders...");
+  ESP_LOGD("paxton", "90-bit: Scanning all possible decodings...");
 
-  // Strategy 1: Try groups of 4 or 5 bits starting from different positions
+  std::vector<std::string> all_valid;
+  struct DecoderResult {
+    std::string card;
+    int start;
+    int group;
+    bool lsb;
+  };
+  std::vector<DecoderResult> results;
+
+  // Try all combinations and collect ALL valid results
   for (int group_size = 4; group_size <= 9; group_size++) {
     for (int start = 11; start <= 20 && start + group_size * 8 < n - 10; start++) {
-      card_no.clear();
-      bool valid = true;
+      // Try MSB first
+      std::string candidate_msb;
+      bool valid_msb = true;
 
       for (int d = 0; d < 8; d++) {
         int idx = start + d * group_size;
-        if (idx + 3 >= n - 10) { valid = false; break; }
-
-        // Try MSB first
+        if (idx + 3 >= n - 10) { valid_msb = false; break; }
         int val = (bits_[idx] << 3) | (bits_[idx+1] << 2) | (bits_[idx+2] << 1) | (bits_[idx+3]);
-        if (val > 9) { valid = false; break; }
-        card_no.push_back(char('0' + val));
+        if (val > 9) { valid_msb = false; break; }
+        candidate_msb.push_back(char('0' + val));
       }
 
-      if (valid && card_no.length() == 8) {
-        ESP_LOGD("paxton", "90-bit: Decoded with start=%d, group=%d: %s", start, group_size, card_no.c_str());
-        colour = "None";
-        return true;
+      if (valid_msb && candidate_msb.length() == 8) {
+        results.push_back({candidate_msb, start, group_size, false});
       }
 
       // Try LSB first (reversed nibble)
-      card_no.clear();
-      valid = true;
+      std::string candidate_lsb;
+      bool valid_lsb = true;
 
       for (int d = 0; d < 8; d++) {
         int idx = start + d * group_size;
-        if (idx + 3 >= n - 10) { valid = false; break; }
-
+        if (idx + 3 >= n - 10) { valid_lsb = false; break; }
         int val = (bits_[idx+3] << 3) | (bits_[idx+2] << 2) | (bits_[idx+1] << 1) | (bits_[idx]);
-        if (val > 9) { valid = false; break; }
-        card_no.push_back(char('0' + val));
+        if (val > 9) { valid_lsb = false; break; }
+        candidate_lsb.push_back(char('0' + val));
       }
 
-      if (valid && card_no.length() == 8) {
-        ESP_LOGD("paxton", "90-bit: Decoded (LSB) with start=%d, group=%d: %s", start, group_size, card_no.c_str());
-        colour = "None";
-        return true;
+      if (valid_lsb && candidate_lsb.length() == 8) {
+        results.push_back({candidate_lsb, start, group_size, true});
       }
     }
+  }
+
+  // Log all valid results
+  ESP_LOGI("paxton", "90-bit: Found %d valid decodings:", (int)results.size());
+  for (const auto& r : results) {
+    ESP_LOGI("paxton", "  → %s [start=%d, group=%d, %s]",
+             r.card.c_str(), r.start, r.group, r.lsb ? "LSB" : "MSB");
+  }
+
+  // Return the first result for now (user will tell us which is correct)
+  if (!results.empty()) {
+    card_no = results[0].card;
+    colour = "None";
+    ESP_LOGW("paxton", "90-bit: Using first result: %s (may be incorrect!)", card_no.c_str());
+    ESP_LOGW("paxton", "90-bit: Please check logs above and report which decoding matches your card!");
+    return true;
   }
 
   ESP_LOGW("paxton", "90-bit: No valid decoder found. Raw bits published to raw_bits sensor.");
