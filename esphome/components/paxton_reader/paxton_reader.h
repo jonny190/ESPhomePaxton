@@ -84,6 +84,7 @@ class PaxtonReader : public Component {
   bool parse_net2_(std::string &card_no, std::string &bin);
   bool parse_switch2_(std::string &card_no, std::string &colour, std::string &bin);
   bool parse_paxton90_(std::string &card_no, std::string &colour, std::string &bin);
+  bool parse_net2_proper_(std::string &card_no, int start_pos, int num_digits);
 
   void publish_success_(const std::string &card_no,
                         const std::string &type,

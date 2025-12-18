@@ -156,6 +156,84 @@ bool PaxtonReader::parse_switch2_(std::string &card_no, std::string &colour, std
   return true;
 }
 
+// Proper Net2 decoder with column/row parity (from Paxtogeddon)
+bool PaxtonReader::parse_net2_proper_(std::string &card_no, int start_pos, int num_digits) {
+  // Net2 uses groups of 5 bits: 4 data bits (BCD, LSB first) + 1 row parity (odd)
+  // Column parity (even) is checked at the LRC position
+
+  std::string result;
+  result.reserve(num_digits);
+  int LRC[4] = {0, 0, 0, 0};
+
+  // Process groups of 5 bits
+  for (int i = start_pos; i < bit_count_ - 10; i += 5) {
+    if (i + 4 >= bit_count_ - 10) break;
+
+    // Get 5 bits: b0-b3 are data (LSB first), b4 is row parity
+    int b0 = bits_[i + 0];
+    int b1 = bits_[i + 1];
+    int b2 = bits_[i + 2];
+    int b3 = bits_[i + 3];
+    int b4 = bits_[i + 4];
+
+    // BCD value (LSB first, like Paxtogeddon)
+    int dval = 8*b3 + 4*b2 + 2*b1 + 1*b0;
+
+    // Check row parity (odd): sum of data bits should make parity bit odd
+    int rowParity = (b0 + b1 + b2 + b3) % 2 == 0 ? 1 : 0;
+    if (rowParity != b4) {
+      ESP_LOGD("paxton", "Net2: Row parity fail at bit %d", i);
+      return false;
+    }
+
+    // Start bits check (position 10 in standard Net2 = start_pos in our case)
+    if (i == start_pos && dval != 11) {
+      ESP_LOGD("paxton", "Net2: Start bits != 11 (got %d)", dval);
+      return false;
+    }
+
+    // Accumulate column parity (skip LRC group itself)
+    int lrc_pos = start_pos + (num_digits + 2) * 5; // +2 for start/stop groups
+    if (i < lrc_pos) {
+      LRC[0] += b0;
+      LRC[1] += b1;
+      LRC[2] += b2;
+      LRC[3] += b3;
+    }
+
+    // Check LRC (column parity, even)
+    if (i == lrc_pos) {
+      int c0 = LRC[0] % 2 == 0 ? 0 : 1;
+      int c1 = LRC[1] % 2 == 0 ? 0 : 1;
+      int c2 = LRC[2] % 2 == 0 ? 0 : 1;
+      int c3 = LRC[3] % 2 == 0 ? 0 : 1;
+
+      if (!(c0 == b0 && c1 == b1 && c2 == b2 && c3 == b3)) {
+        ESP_LOGD("paxton", "Net2: Column parity (LRC) fail");
+        return false;
+      }
+    }
+
+    // Collect card digits (skip start/stop groups)
+    int digit_start = start_pos + 5;  // First digit after start bits
+    int digit_end = start_pos + (num_digits + 1) * 5;  // Before stop bits
+    if (i >= digit_start && i < digit_end) {
+      if (dval > 9) {
+        ESP_LOGD("paxton", "Net2: Invalid BCD digit %d at bit %d", dval, i);
+        return false;
+      }
+      result.push_back(char('0' + dval));
+    }
+  }
+
+  if ((int)result.length() == num_digits) {
+    card_no = result;
+    return true;
+  }
+
+  return false;
+}
+
 bool PaxtonReader::parse_paxton90_(std::string &card_no, std::string &colour, std::string &bin) {
   const uint16_t n = bit_count_;
   if (n != paxton90_bits) return false;
@@ -232,7 +310,20 @@ bool PaxtonReader::parse_paxton90_(std::string &card_no, std::string &colour, st
              r.card.c_str(), r.start, r.group, r.lsb ? "LSB" : "MSB");
   }
 
-  // Try adaptive BCD (same as Net2) as fallback - Net2 uses column/row parity
+  // Try proper Net2 decoder with parity checking (from Paxtogeddon)
+  // 90-bit format might be extended Net2, try different start positions
+  for (int start : {10, 11, 12, 13}) {
+    for (int digits : {8, 9, 10}) {
+      if (parse_net2_proper_(card_no, start, digits)) {
+        ESP_LOGI("paxton", "90-bit: Net2 parity decoder succeeded at start=%d, digits=%d: %s",
+                 start, digits, card_no.c_str());
+        colour = "None";
+        return true;
+      }
+    }
+  }
+
+  // Try adaptive BCD as fallback
   if (try_adaptive_bcd_(card_no)) {
     ESP_LOGI("paxton", "90-bit: Adaptive BCD succeeded: %s", card_no.c_str());
     colour = "None";
