@@ -310,39 +310,6 @@ bool PaxtonReader::parse_paxton90_(std::string &card_no, std::string &colour, st
              r.card.c_str(), r.start, r.group, r.lsb ? "LSB" : "MSB");
   }
 
-  // Try Switch2 Fob-style interleaved decoding (for official Paxton 90-bit cards)
-  // Discovered pattern: positions [35,40,45,55,50,25,35,30] from analysis of real cards
-  std::vector<int> fob_positions = {35, 40, 45, 55, 50, 25, 35, 30};
-  std::string fob_result;
-  bool fob_valid = true;
-
-  for (int pos : fob_positions) {
-    if (pos + 3 < n - 10) {
-      int b0 = bits_[pos];
-      int b1 = bits_[pos+1];
-      int b2 = bits_[pos+2];
-      int b3 = bits_[pos+3];
-      int dval = 8*b3 + 4*b2 + 2*b1 + 1*b0;  // LSB first
-
-      if (dval <= 9) {
-        fob_result.push_back(char('0' + dval));
-      } else {
-        fob_valid = false;
-        break;
-      }
-    } else {
-      fob_valid = false;
-      break;
-    }
-  }
-
-  if (fob_valid && fob_result.length() == 8) {
-    ESP_LOGI("paxton", "90-bit: Switch2 Fob-style decoder succeeded: %s", fob_result.c_str());
-    card_no = fob_result;
-    colour = "None";
-    return true;
-  }
-
   // Try sequential decoder with skipped positions (for cheap/aftermarket cards)
   // Pattern: [15, 30, 35, 40, 45, 50, 55, 60] - skips positions 20 and 25
   std::vector<int> cheap_positions = {15, 30, 35, 40, 45, 50, 55, 60};
@@ -372,6 +339,39 @@ bool PaxtonReader::parse_paxton90_(std::string &card_no, std::string &colour, st
   if (cheap_valid && cheap_result.length() == 8) {
     ESP_LOGI("paxton", "90-bit: Sequential decoder (cheap cards) succeeded: %s", cheap_result.c_str());
     card_no = cheap_result;
+    colour = "None";
+    return true;
+  }
+
+  // Try Switch2 Fob-style interleaved decoding (for official Paxton 90-bit cards)
+  // Discovered pattern: positions [35,40,45,55,50,25,35,30] from analysis of real cards
+  std::vector<int> fob_positions = {35, 40, 45, 55, 50, 25, 35, 30};
+  std::string fob_result;
+  bool fob_valid = true;
+
+  for (int pos : fob_positions) {
+    if (pos + 3 < n - 10) {
+      int b0 = bits_[pos];
+      int b1 = bits_[pos+1];
+      int b2 = bits_[pos+2];
+      int b3 = bits_[pos+3];
+      int dval = 8*b3 + 4*b2 + 2*b1 + 1*b0;  // LSB first
+
+      if (dval <= 9) {
+        fob_result.push_back(char('0' + dval));
+      } else {
+        fob_valid = false;
+        break;
+      }
+    } else {
+      fob_valid = false;
+      break;
+    }
+  }
+
+  if (fob_valid && fob_result.length() == 8) {
+    ESP_LOGI("paxton", "90-bit: Switch2 Fob-style decoder succeeded: %s", fob_result.c_str());
+    card_no = fob_result;
     colour = "None";
     return true;
   }
