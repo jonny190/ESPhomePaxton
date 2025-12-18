@@ -24,6 +24,7 @@ CONF_RAW_BITS = "raw_bits"
 
 CONF_NET2_BITS = "net2_bits"
 CONF_SWITCH2_BITS = "switch2_bits"
+CONF_PAXTON90_BITS = "paxton90_bits"
 CONF_DEBOUNCE_US = "debounce_us"
 
 CONF_INVERT_DATA = "invert_data"
@@ -50,6 +51,7 @@ CONFIG_SCHEMA = cv.Schema(
 
         cv.Optional(CONF_NET2_BITS, default=75): cv.positive_int,
         cv.Optional(CONF_SWITCH2_BITS, default=220): cv.positive_int,
+        cv.Optional(CONF_PAXTON90_BITS, default=90): cv.positive_int,
         cv.Optional(CONF_DEBOUNCE_US, default=350): cv.positive_int,
 
         cv.Optional(CONF_INVERT_DATA, default=False): cv.boolean,
@@ -86,6 +88,7 @@ async def to_code(config):
 
     cg.add(var.set_net2_bits(config[CONF_NET2_BITS]))
     cg.add(var.set_switch2_bits(config[CONF_SWITCH2_BITS]))
+    cg.add(var.set_paxton90_bits(config[CONF_PAXTON90_BITS]))
     cg.add(var.set_debounce_us(config[CONF_DEBOUNCE_US]))
 
     cg.add(var.set_invert_data(config[CONF_INVERT_DATA]))

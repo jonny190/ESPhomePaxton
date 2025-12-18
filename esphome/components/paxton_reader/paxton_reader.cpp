@@ -155,6 +155,68 @@ bool PaxtonReader::parse_switch2_(std::string &card_no, std::string &colour, std
   return true;
 }
 
+bool PaxtonReader::parse_paxton90_(std::string &card_no, std::string &colour, std::string &bin) {
+  const uint16_t n = bit_count_;
+  if (n != paxton90_bits) return false;
+  if (!check_leadin_10zeros_ending_one_()) return false;
+  if (!check_leadout_10zeros_()) return false;
+
+  bin.reserve(n);
+  for (int i = 0; i < n; i++) bin.push_back(bits_[i] ? '1' : '0');
+
+  // 90-bit format: 10 zeros + 1 + 69 data bits + 10 zeros
+  // Data section is bits 11-79 (69 bits)
+  // Encoding is complex - try multiple strategies
+
+  ESP_LOGD("paxton", "90-bit: Trying experimental decoders...");
+
+  // Strategy 1: Try groups of 4 or 5 bits starting from different positions
+  for (int group_size = 4; group_size <= 9; group_size++) {
+    for (int start = 11; start <= 20 && start + group_size * 8 < n - 10; start++) {
+      card_no.clear();
+      bool valid = true;
+
+      for (int d = 0; d < 8; d++) {
+        int idx = start + d * group_size;
+        if (idx + 3 >= n - 10) { valid = false; break; }
+
+        // Try MSB first
+        int val = (bits_[idx] << 3) | (bits_[idx+1] << 2) | (bits_[idx+2] << 1) | (bits_[idx+3]);
+        if (val > 9) { valid = false; break; }
+        card_no.push_back(char('0' + val));
+      }
+
+      if (valid && card_no.length() == 8) {
+        ESP_LOGD("paxton", "90-bit: Decoded with start=%d, group=%d: %s", start, group_size, card_no.c_str());
+        colour = "None";
+        return true;
+      }
+
+      // Try LSB first (reversed nibble)
+      card_no.clear();
+      valid = true;
+
+      for (int d = 0; d < 8; d++) {
+        int idx = start + d * group_size;
+        if (idx + 3 >= n - 10) { valid = false; break; }
+
+        int val = (bits_[idx+3] << 3) | (bits_[idx+2] << 2) | (bits_[idx+1] << 1) | (bits_[idx]);
+        if (val > 9) { valid = false; break; }
+        card_no.push_back(char('0' + val));
+      }
+
+      if (valid && card_no.length() == 8) {
+        ESP_LOGD("paxton", "90-bit: Decoded (LSB) with start=%d, group=%d: %s", start, group_size, card_no.c_str());
+        colour = "None";
+        return true;
+      }
+    }
+  }
+
+  ESP_LOGW("paxton", "90-bit: No valid decoder found. Raw bits published to raw_bits sensor.");
+  return false;
+}
+
 void PaxtonReader::publish_success_(const std::string &card_no,
                                     const std::string &type,
                                     const std::string &colour,
@@ -218,6 +280,13 @@ void PaxtonReader::loop() {
         ok = parse_switch2_(card_no, colour, bin);
         if (ok) publish_success_(card_no, "Switch2 Knockout", colour, n, bin);
         else publish_error_("Switch2 parse fail");
+      } else if (n == paxton90_bits) {
+        ok = parse_paxton90_(card_no, colour, bin);
+        if (ok) {
+          publish_success_(card_no, "Paxton 90-bit", colour, n, bin);
+        } else {
+          publish_error_("Paxton 90-bit parse fail (see raw_bits sensor)");
+        }
       } else {
         publish_error_("Unknown bit length");
       }

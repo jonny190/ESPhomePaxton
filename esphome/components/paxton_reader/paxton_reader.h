@@ -25,6 +25,7 @@ class PaxtonReader : public Component {
   // Config
   uint16_t net2_bits{75};
   uint16_t switch2_bits{220};
+  uint16_t paxton90_bits{90};
   uint32_t debounce_us{350};
   uint32_t frame_gap_us{4000};
   bool invert_data_{false};
@@ -46,6 +47,7 @@ class PaxtonReader : public Component {
 
   void set_net2_bits(uint16_t v) { net2_bits = v; }
   void set_switch2_bits(uint16_t v) { switch2_bits = v; }
+  void set_paxton90_bits(uint16_t v) { paxton90_bits = v; }
   void set_debounce_us(uint32_t v) { debounce_us = v; }
   void set_frame_gap_us(uint32_t v) { frame_gap_us = v; }
   void set_invert_data(bool v) { invert_data_ = v; }
@@ -81,6 +83,7 @@ class PaxtonReader : public Component {
 
   bool parse_net2_(std::string &card_no, std::string &bin);
   bool parse_switch2_(std::string &card_no, std::string &colour, std::string &bin);
+  bool parse_paxton90_(std::string &card_no, std::string &colour, std::string &bin);
 
   void publish_success_(const std::string &card_no,
                         const std::string &type,
