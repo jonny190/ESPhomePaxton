@@ -1,6 +1,9 @@
 #include "paxton_reader.h"
 #include "driver/gpio.h"  // <-- IDF GPIO
 #include <algorithm>      // for std::reverse
+#include "esp_task_wdt.h" // ESP-IDF task watchdog
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 namespace esphome {
 namespace paxton {
@@ -416,29 +419,29 @@ void PaxtonReader::publish_success_(const std::string &card_no,
                                     uint16_t bits,
                                     const std::string &bin) {
   if (last_card_ts) last_card_ts->publish_state(card_no);
-  App.feed_wdt();  // Reset watchdog between publishes
+  esp_task_wdt_reset();  // Reset watchdog between publishes
   if (card_type_ts) card_type_ts->publish_state(type);
-  App.feed_wdt();
+  esp_task_wdt_reset();
   if (card_colour_ts) card_colour_ts->publish_state(colour);
-  App.feed_wdt();
+  esp_task_wdt_reset();
   if (bit_count_s) bit_count_s->publish_state(bits);
-  App.feed_wdt();
+  esp_task_wdt_reset();
   if (reading_bs) reading_bs->publish_state(true);
-  yield();  // Allow scheduler to run
+  vTaskDelay(1);  // Allow scheduler to run (1 tick)
   if (led_green_ >= 0) led_on_for_(led_green_, 60);
   if (reading_bs) reading_bs->publish_state(false);
-  App.feed_wdt();
+  esp_task_wdt_reset();
   ESP_LOGI("paxton", "Card: %s | Type: %s | Colour: %s | Bits: %u",
            card_no.c_str(), type.c_str(), colour.c_str(), (unsigned) bits);
 }
 
 void PaxtonReader::publish_error_(const char *msg) {
   if (card_type_ts) card_type_ts->publish_state("Error");
-  App.feed_wdt();
+  esp_task_wdt_reset();
   if (last_card_ts) last_card_ts->publish_state(msg);
-  App.feed_wdt();
+  esp_task_wdt_reset();
   if (bit_count_s) bit_count_s->publish_state((float) bit_count_);
-  App.feed_wdt();
+  esp_task_wdt_reset();
   if (led_red_ >= 0) led_on_for_(led_red_, 100);
   ESP_LOGW("paxton", "Parse error: %s (bits=%u)", msg, (unsigned) bit_count_);
 }
@@ -463,8 +466,8 @@ void PaxtonReader::loop() {
       for (int i = 0; i < n; i++) bin.push_back(bits_[i] ? '1' : '0');
       if (raw_bits_ts) {
         raw_bits_ts->publish_state(bin);
-        App.feed_wdt();  // Reset watchdog after publishing
-        yield();         // Allow other tasks to run
+        esp_task_wdt_reset();  // Reset watchdog after publishing
+        vTaskDelay(1);         // Allow other tasks to run (1 tick)
       }
 
       std::string card_no, colour;
