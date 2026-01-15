@@ -452,21 +452,34 @@ void PaxtonReader::loop() {
     led_on_pin_ = -1;
   }
 
-  // Handle deferred publishing one sensor per loop iteration
+  // Handle deferred publishing with aggressive watchdog resets
   if (publish_step_ > 0) {
-    esp_task_wdt_reset();  // Reset watchdog before each publish
+    // Reset watchdog before AND after each publish
+    esp_task_wdt_reset();
 
     if (pending_error_) {
       // Error publishing
       switch (publish_step_) {
         case 1:
-          if (card_type_ts) card_type_ts->publish_state("Error");
+          if (card_type_ts) {
+            esp_task_wdt_reset();
+            card_type_ts->publish_state("Error");
+            esp_task_wdt_reset();
+          }
           break;
         case 2:
-          if (last_card_ts) last_card_ts->publish_state(pending_error_msg_);
+          if (last_card_ts) {
+            esp_task_wdt_reset();
+            last_card_ts->publish_state(pending_error_msg_);
+            esp_task_wdt_reset();
+          }
           break;
         case 3:
-          if (bit_count_s) bit_count_s->publish_state((float) pending_bits_);
+          if (bit_count_s) {
+            esp_task_wdt_reset();
+            bit_count_s->publish_state((float) pending_bits_);
+            esp_task_wdt_reset();
+          }
           publish_step_ = 0;  // Done
           return;
       }
@@ -474,30 +487,61 @@ void PaxtonReader::loop() {
       // Success publishing
       switch (publish_step_) {
         case 1:
-          if (raw_bits_ts) raw_bits_ts->publish_state(pending_bin_);
+          ESP_LOGD("paxton", "Deferred publish step 1: raw_bits");
+          if (raw_bits_ts) {
+            esp_task_wdt_reset();
+            raw_bits_ts->publish_state(pending_bin_);
+            esp_task_wdt_reset();
+          }
           break;
         case 2:
-          if (last_card_ts) last_card_ts->publish_state(pending_card_no_);
+          ESP_LOGD("paxton", "Deferred publish step 2: last_card");
+          if (last_card_ts) {
+            esp_task_wdt_reset();
+            last_card_ts->publish_state(pending_card_no_);
+            esp_task_wdt_reset();
+          }
           break;
         case 3:
-          if (card_type_ts) card_type_ts->publish_state(pending_type_);
+          if (card_type_ts) {
+            esp_task_wdt_reset();
+            card_type_ts->publish_state(pending_type_);
+            esp_task_wdt_reset();
+          }
           break;
         case 4:
-          if (card_colour_ts) card_colour_ts->publish_state(pending_colour_);
+          if (card_colour_ts) {
+            esp_task_wdt_reset();
+            card_colour_ts->publish_state(pending_colour_);
+            esp_task_wdt_reset();
+          }
           break;
         case 5:
-          if (bit_count_s) bit_count_s->publish_state(pending_bits_);
+          if (bit_count_s) {
+            esp_task_wdt_reset();
+            bit_count_s->publish_state(pending_bits_);
+            esp_task_wdt_reset();
+          }
           break;
         case 6:
-          if (reading_bs) reading_bs->publish_state(true);
+          if (reading_bs) {
+            esp_task_wdt_reset();
+            reading_bs->publish_state(true);
+            esp_task_wdt_reset();
+          }
           break;
         case 7:
-          if (reading_bs) reading_bs->publish_state(false);
+          if (reading_bs) {
+            esp_task_wdt_reset();
+            reading_bs->publish_state(false);
+            esp_task_wdt_reset();
+          }
           publish_step_ = 0;  // Done
           return;
       }
     }
     publish_step_++;
+    esp_task_wdt_reset();  // Reset after incrementing step
     return;  // Process one publish per loop iteration
   }
 
