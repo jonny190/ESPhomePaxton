@@ -418,30 +418,27 @@ void PaxtonReader::publish_success_(const std::string &card_no,
                                     const std::string &colour,
                                     uint16_t bits,
                                     const std::string &bin) {
-  if (last_card_ts) last_card_ts->publish_state(card_no);
-  esp_task_wdt_reset();  // Reset watchdog between publishes
-  if (card_type_ts) card_type_ts->publish_state(type);
-  esp_task_wdt_reset();
-  if (card_colour_ts) card_colour_ts->publish_state(colour);
-  esp_task_wdt_reset();
-  if (bit_count_s) bit_count_s->publish_state(bits);
-  esp_task_wdt_reset();
-  if (reading_bs) reading_bs->publish_state(true);
-  vTaskDelay(1);  // Allow scheduler to run (1 tick)
+  // Defer publishing to loop() to avoid watchdog timeout
+  pending_card_no_ = card_no;
+  pending_type_ = type;
+  pending_colour_ = colour;
+  pending_bits_ = bits;
+  pending_bin_ = bin;
+  pending_error_ = false;
+  publish_step_ = 1;  // Start deferred publish
+
   if (led_green_ >= 0) led_on_for_(led_green_, 60);
-  if (reading_bs) reading_bs->publish_state(false);
-  esp_task_wdt_reset();
   ESP_LOGI("paxton", "Card: %s | Type: %s | Colour: %s | Bits: %u",
            card_no.c_str(), type.c_str(), colour.c_str(), (unsigned) bits);
 }
 
 void PaxtonReader::publish_error_(const char *msg) {
-  if (card_type_ts) card_type_ts->publish_state("Error");
-  esp_task_wdt_reset();
-  if (last_card_ts) last_card_ts->publish_state(msg);
-  esp_task_wdt_reset();
-  if (bit_count_s) bit_count_s->publish_state((float) bit_count_);
-  esp_task_wdt_reset();
+  // Defer publishing to loop() to avoid watchdog timeout
+  pending_error_ = true;
+  pending_error_msg_ = msg;
+  pending_bits_ = bit_count_;
+  publish_step_ = 1;  // Start deferred publish
+
   if (led_red_ >= 0) led_on_for_(led_red_, 100);
   ESP_LOGW("paxton", "Parse error: %s (bits=%u)", msg, (unsigned) bit_count_);
 }
@@ -455,20 +452,64 @@ void PaxtonReader::loop() {
     led_on_pin_ = -1;
   }
 
+  // Handle deferred publishing one sensor per loop iteration
+  if (publish_step_ > 0) {
+    esp_task_wdt_reset();  // Reset watchdog before each publish
+
+    if (pending_error_) {
+      // Error publishing
+      switch (publish_step_) {
+        case 1:
+          if (card_type_ts) card_type_ts->publish_state("Error");
+          break;
+        case 2:
+          if (last_card_ts) last_card_ts->publish_state(pending_error_msg_);
+          break;
+        case 3:
+          if (bit_count_s) bit_count_s->publish_state((float) pending_bits_);
+          publish_step_ = 0;  // Done
+          return;
+      }
+    } else {
+      // Success publishing
+      switch (publish_step_) {
+        case 1:
+          if (raw_bits_ts) raw_bits_ts->publish_state(pending_bin_);
+          break;
+        case 2:
+          if (last_card_ts) last_card_ts->publish_state(pending_card_no_);
+          break;
+        case 3:
+          if (card_type_ts) card_type_ts->publish_state(pending_type_);
+          break;
+        case 4:
+          if (card_colour_ts) card_colour_ts->publish_state(pending_colour_);
+          break;
+        case 5:
+          if (bit_count_s) bit_count_s->publish_state(pending_bits_);
+          break;
+        case 6:
+          if (reading_bs) reading_bs->publish_state(true);
+          break;
+        case 7:
+          if (reading_bs) reading_bs->publish_state(false);
+          publish_step_ = 0;  // Done
+          return;
+      }
+    }
+    publish_step_++;
+    return;  // Process one publish per loop iteration
+  }
+
   if (bit_count_ > 0) {
     if ((micros() - last_edge_us_) > frame_gap_us) {  // frame complete
       processing_ = true;
       const uint16_t n = bit_count_;
       log_bits_preview_(n);
 
-      // Publish full bitstring to HA
+      // Build bitstring for later publishing
       std::string bin; bin.reserve(n);
       for (int i = 0; i < n; i++) bin.push_back(bits_[i] ? '1' : '0');
-      if (raw_bits_ts) {
-        raw_bits_ts->publish_state(bin);
-        esp_task_wdt_reset();  // Reset watchdog after publishing
-        vTaskDelay(1);         // Allow other tasks to run (1 tick)
-      }
 
       std::string card_no, colour;
       bool ok = false;

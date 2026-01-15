@@ -75,6 +75,16 @@ class PaxtonReader : public Component {
   volatile uint32_t last_edge_us_{0};
   volatile uint8_t bits_[256];
 
+  // Deferred publishing state
+  uint8_t publish_step_{0};
+  std::string pending_card_no_;
+  std::string pending_type_;
+  std::string pending_colour_;
+  std::string pending_bin_;
+  uint16_t pending_bits_{0};
+  bool pending_error_{false};
+  std::string pending_error_msg_;
+
   bool check_leadin_10zeros_ending_one_() const;
   bool check_leadout_10zeros_() const;
 
