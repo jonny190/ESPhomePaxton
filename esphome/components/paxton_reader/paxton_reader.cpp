@@ -123,17 +123,86 @@ bool PaxtonReader::parse_net2_(std::string &card_no, std::string &bin) {
   bin.reserve(n);
   for (int i = 0; i < n; i++) bin.push_back(bits_[i] ? '1' : '0');
 
-  card_no.clear();
+  // Net2 75-bit format (Paxtogeddon algorithm):
+  // - 10 lead-in zeros (positions 0-9)
+  // - 11 groups of 5 bits each (positions 10-64): START + 8 digits + STOP + LRC
+  // - 10 lead-out zeros (positions 65-74)
+  //
+  // Each 5-bit group: 4 BCD bits (LSB first) + 1 parity bit
+  // BCD value = 8*bit[i+3] + 4*bit[i+2] + 2*bit[i+1] + 1*bit[i+0]
 
-  // Current strict attempt (kept) — adaptive fallback will kick in if this fails.
-  int idx = 11;
-  for (int d = 0; d < 8; d++) {
-    if (idx + 3 >= n) return false;
-    int val = (bits_[idx] << 3) | (bits_[idx + 1] << 2) | (bits_[idx + 2] << 1) | (bits_[idx + 3]);
-    idx += 4;
-    if (val > 9) return false;
-    card_no.push_back(char('0' + val));
+  card_no.clear();
+  int LRC[4] = {0, 0, 0, 0};
+
+  for (int i = 10; i < n - 10; i += 5) {
+    if (i + 4 >= n - 10) break;
+
+    int b0 = bits_[i + 0];
+    int b1 = bits_[i + 1];
+    int b2 = bits_[i + 2];
+    int b3 = bits_[i + 3];
+    int b4 = bits_[i + 4];
+
+    // BCD value (LSB first, like Paxtogeddon)
+    int dval = 8*b3 + 4*b2 + 2*b1 + 1*b0;
+
+    // Check row parity (odd)
+    int row_parity = (b0 + b1 + b2 + b3) % 2 == 0 ? 1 : 0;
+    if (row_parity != b4) {
+      ESP_LOGD("paxton", "Net2: Row parity fail at position %d", i);
+      return false;
+    }
+
+    // Check START marker (position 10)
+    if (i == 10) {
+      if (dval != 11) {  // 0xB
+        ESP_LOGD("paxton", "Net2: Expected START (0xB=11) at pos 10, got %d", dval);
+        return false;
+      }
+    }
+    // Check STOP marker (position 55)
+    else if (i == 55) {
+      if (dval != 15) {  // 0xF
+        ESP_LOGD("paxton", "Net2: Expected STOP (0xF=15) at pos 55, got %d", dval);
+        return false;
+      }
+    }
+    // Check LRC (position 60)
+    else if (i == 60) {
+      int c0 = LRC[0] % 2 == 0 ? 0 : 1;
+      int c1 = LRC[1] % 2 == 0 ? 0 : 1;
+      int c2 = LRC[2] % 2 == 0 ? 0 : 1;
+      int c3 = LRC[3] % 2 == 0 ? 0 : 1;
+
+      if (!(c0 == b0 && c1 == b1 && c2 == b2 && c3 == b3)) {
+        ESP_LOGD("paxton", "Net2: LRC mismatch");
+        return false;
+      }
+    }
+    // Collect card digits (positions 15-50, which are 8 digits)
+    else if (i >= 15 && i <= 50) {
+      if (dval > 9) {
+        ESP_LOGD("paxton", "Net2: Invalid BCD digit %d at position %d", dval, i);
+        return false;
+      }
+      card_no.push_back(char('0' + dval));
+    }
+
+    // Accumulate LRC (skip LRC group itself)
+    if (i < 60) {
+      LRC[0] += b0;
+      LRC[1] += b1;
+      LRC[2] += b2;
+      LRC[3] += b3;
+    }
   }
+
+  if (card_no.length() != 8) {
+    ESP_LOGD("paxton", "Net2: Expected 8 digits, got %zu", card_no.length());
+    return false;
+  }
+
+  ESP_LOGI("paxton", "Net2: Decoded card: %s", card_no.c_str());
   return true;
 }
 
@@ -159,84 +228,6 @@ bool PaxtonReader::parse_switch2_(std::string &card_no, std::string &colour, std
   return true;
 }
 
-// Proper Net2 decoder with column/row parity (from Paxtogeddon)
-bool PaxtonReader::parse_net2_proper_(std::string &card_no, int start_pos, int num_digits) {
-  // Net2 uses groups of 5 bits: 4 data bits (BCD, LSB first) + 1 row parity (odd)
-  // Column parity (even) is checked at the LRC position
-
-  std::string result;
-  result.reserve(num_digits);
-  int LRC[4] = {0, 0, 0, 0};
-
-  // Process groups of 5 bits
-  for (int i = start_pos; i < bit_count_ - 10; i += 5) {
-    if (i + 4 >= bit_count_ - 10) break;
-
-    // Get 5 bits: b0-b3 are data (LSB first), b4 is row parity
-    int b0 = bits_[i + 0];
-    int b1 = bits_[i + 1];
-    int b2 = bits_[i + 2];
-    int b3 = bits_[i + 3];
-    int b4 = bits_[i + 4];
-
-    // BCD value (LSB first, like Paxtogeddon)
-    int dval = 8*b3 + 4*b2 + 2*b1 + 1*b0;
-
-    // Check row parity (odd): sum of data bits should make parity bit odd
-    int rowParity = (b0 + b1 + b2 + b3) % 2 == 0 ? 1 : 0;
-    if (rowParity != b4) {
-      ESP_LOGD("paxton", "Net2: Row parity fail at bit %d", i);
-      return false;
-    }
-
-    // Start bits check (position 10 in standard Net2 = start_pos in our case)
-    if (i == start_pos && dval != 11) {
-      ESP_LOGD("paxton", "Net2: Start bits != 11 (got %d)", dval);
-      return false;
-    }
-
-    // Accumulate column parity (skip LRC group itself)
-    int lrc_pos = start_pos + (num_digits + 2) * 5; // +2 for start/stop groups
-    if (i < lrc_pos) {
-      LRC[0] += b0;
-      LRC[1] += b1;
-      LRC[2] += b2;
-      LRC[3] += b3;
-    }
-
-    // Check LRC (column parity, even)
-    if (i == lrc_pos) {
-      int c0 = LRC[0] % 2 == 0 ? 0 : 1;
-      int c1 = LRC[1] % 2 == 0 ? 0 : 1;
-      int c2 = LRC[2] % 2 == 0 ? 0 : 1;
-      int c3 = LRC[3] % 2 == 0 ? 0 : 1;
-
-      if (!(c0 == b0 && c1 == b1 && c2 == b2 && c3 == b3)) {
-        ESP_LOGD("paxton", "Net2: Column parity (LRC) fail");
-        return false;
-      }
-    }
-
-    // Collect card digits (skip start/stop groups)
-    int digit_start = start_pos + 5;  // First digit after start bits
-    int digit_end = start_pos + (num_digits + 1) * 5;  // Before stop bits
-    if (i >= digit_start && i < digit_end) {
-      if (dval > 9) {
-        ESP_LOGD("paxton", "Net2: Invalid BCD digit %d at bit %d", dval, i);
-        return false;
-      }
-      result.push_back(char('0' + dval));
-    }
-  }
-
-  if ((int)result.length() == num_digits) {
-    card_no = result;
-    return true;
-  }
-
-  return false;
-}
-
 bool PaxtonReader::parse_paxton90_(std::string &card_no, std::string &colour, std::string &bin) {
   const uint16_t n = bit_count_;
   if (n != paxton90_bits) return false;
@@ -246,170 +237,101 @@ bool PaxtonReader::parse_paxton90_(std::string &card_no, std::string &colour, st
   bin.reserve(n);
   for (int i = 0; i < n; i++) bin.push_back(bits_[i] ? '1' : '0');
 
-  // 90-bit format: 10 zeros + 1 + 69 data bits + 10 zeros
-  // Data section is bits 11-79 (69 bits)
-  // Encoding is complex - try multiple strategies and log ALL valid results
+  // 90-bit format (Paxtogeddon-style parsing):
+  // - 10 lead-in zeros (positions 0-9)
+  // - 14 groups of 5 bits each (positions 10-79): START + 10 data digits + SEP(0xD) + STOP(0xF) + LRC
+  // - 10 lead-out zeros (positions 80-89)
+  //
+  // Each 5-bit group: 4 BCD bits (LSB first) + 1 parity bit
+  // BCD value = 8*bit[i+3] + 4*bit[i+2] + 2*bit[i+1] + 1*bit[i+0]
+  //
+  // NOTE: The encoded 10 digits do NOT match the printed card number!
+  // Paxton uses a proprietary transformation algorithm.
+  // We output the raw encoded digits for card identification.
 
-  // Scan all possible decodings for fallback (no longer logged verbosely)
-  std::vector<std::string> all_valid;
-  struct DecoderResult {
-    std::string card;
-    int start;
-    int group;
-    bool lsb;
-  };
-  std::vector<DecoderResult> results;
+  std::string all_digits;
+  int LRC[4] = {0, 0, 0, 0};
+  bool parity_ok = true;
 
-  // Try all combinations and collect ALL valid results
-  for (int group_size = 4; group_size <= 9; group_size++) {
-    for (int start = 11; start <= 20 && start + group_size * 8 < n - 10; start++) {
-      // Try MSB first
-      std::string candidate_msb;
-      bool valid_msb = true;
+  // Parse all 5-bit groups from position 10 to 75
+  for (int i = 10; i < 80; i += 5) {
+    if (i + 4 >= n) break;
 
-      for (int d = 0; d < 8; d++) {
-        int idx = start + d * group_size;
-        if (idx + 3 >= n - 10) { valid_msb = false; break; }
-        int val = (bits_[idx] << 3) | (bits_[idx+1] << 2) | (bits_[idx+2] << 1) | (bits_[idx+3]);
-        if (val > 9) { valid_msb = false; break; }
-        candidate_msb.push_back(char('0' + val));
+    int b0 = bits_[i + 0];
+    int b1 = bits_[i + 1];
+    int b2 = bits_[i + 2];
+    int b3 = bits_[i + 3];
+    int b4 = bits_[i + 4];
+
+    // BCD value (LSB first, like Paxtogeddon)
+    int dval = 8*b3 + 4*b2 + 2*b1 + 1*b0;
+
+    // Check row parity (odd): sum of data bits should make parity bit result in odd total
+    int row_parity = (b0 + b1 + b2 + b3) % 2 == 0 ? 1 : 0;
+    if (row_parity != b4) {
+      ESP_LOGD("paxton", "90-bit: Row parity fail at position %d (expected %d, got %d)", i, row_parity, b4);
+      parity_ok = false;
+    }
+
+    // Accumulate LRC (column parity) - skip LRC group itself (position 75)
+    if (i < 75) {
+      LRC[0] += b0;
+      LRC[1] += b1;
+      LRC[2] += b2;
+      LRC[3] += b3;
+    }
+
+    // Check START marker (position 10)
+    if (i == 10) {
+      if (dval != 11) {  // 0xB
+        ESP_LOGW("paxton", "90-bit: Expected START (0xB=11) at pos 10, got %d", dval);
       }
-
-      if (valid_msb && candidate_msb.length() == 8) {
-        results.push_back({candidate_msb, start, group_size, false});
-        // Also try reversed digit order
-        std::string reversed_msb = candidate_msb;
-        std::reverse(reversed_msb.begin(), reversed_msb.end());
-        results.push_back({reversed_msb + " (rev)", start, group_size, false});
+    }
+    // Check SEP marker (position 65)
+    else if (i == 65) {
+      if (dval != 13) {  // 0xD
+        ESP_LOGD("paxton", "90-bit: Expected SEP (0xD=13) at pos 65, got %d", dval);
       }
-
-      // Try LSB first (reversed nibble)
-      std::string candidate_lsb;
-      bool valid_lsb = true;
-
-      for (int d = 0; d < 8; d++) {
-        int idx = start + d * group_size;
-        if (idx + 3 >= n - 10) { valid_lsb = false; break; }
-        int val = (bits_[idx+3] << 3) | (bits_[idx+2] << 2) | (bits_[idx+1] << 1) | (bits_[idx]);
-        if (val > 9) { valid_lsb = false; break; }
-        candidate_lsb.push_back(char('0' + val));
+    }
+    // Check STOP marker (position 70)
+    else if (i == 70) {
+      if (dval != 15) {  // 0xF
+        ESP_LOGW("paxton", "90-bit: Expected STOP (0xF=15) at pos 70, got %d", dval);
       }
+    }
+    // Check LRC (position 75)
+    else if (i == 75) {
+      int c0 = LRC[0] % 2 == 0 ? 0 : 1;
+      int c1 = LRC[1] % 2 == 0 ? 0 : 1;
+      int c2 = LRC[2] % 2 == 0 ? 0 : 1;
+      int c3 = LRC[3] % 2 == 0 ? 0 : 1;
 
-      if (valid_lsb && candidate_lsb.length() == 8) {
-        results.push_back({candidate_lsb, start, group_size, true});
-        // Also try reversed digit order
-        std::string reversed_lsb = candidate_lsb;
-        std::reverse(reversed_lsb.begin(), reversed_lsb.end());
-        results.push_back({reversed_lsb + " (rev)", start, group_size, true});
+      if (!(c0 == b0 && c1 == b1 && c2 == b2 && c3 == b3)) {
+        ESP_LOGD("paxton", "90-bit: LRC mismatch (expected %d%d%d%d, got %d%d%d%d)",
+                 c0, c1, c2, c3, b0, b1, b2, b3);
       }
+    }
+    // Collect data digits (positions 15-60, which are 10 digits)
+    else if (i >= 15 && i <= 60 && dval <= 9) {
+      all_digits.push_back(char('0' + dval));
     }
   }
 
-  // Verbose decoding results removed - only log when a decoder succeeds
-
-  // Try sequential decoder with skipped positions (for cheap/aftermarket cards)
-  // Pattern: [15, 30, 35, 40, 45, 50, 55, 60] - skips positions 20 and 25
-  std::vector<int> cheap_positions = {15, 30, 35, 40, 45, 50, 55, 60};
-  std::string cheap_result;
-  bool cheap_valid = true;
-
-  for (int pos : cheap_positions) {
-    if (pos + 3 < n - 10) {
-      int b0 = bits_[pos];
-      int b1 = bits_[pos+1];
-      int b2 = bits_[pos+2];
-      int b3 = bits_[pos+3];
-      int dval = 8*b3 + 4*b2 + 2*b1 + 1*b0;  // LSB first
-
-      if (dval <= 9) {
-        cheap_result.push_back(char('0' + dval));
-      } else {
-        cheap_valid = false;
-        break;
-      }
-    } else {
-      cheap_valid = false;
-      break;
-    }
-  }
-
-  // Reject results starting with "01", "02", "03" which are likely incorrect decodings
-  bool starts_with_invalid = cheap_result.length() >= 2 &&
-                             cheap_result[0] == '0' &&
-                             (cheap_result[1] >= '1' && cheap_result[1] <= '3');
-
-  if (cheap_valid && cheap_result.length() == 8 && !starts_with_invalid) {
-    ESP_LOGI("paxton", "90-bit: Sequential decoder (cheap cards) succeeded: %s", cheap_result.c_str());
-    card_no = cheap_result;
+  if (all_digits.length() >= 8) {
+    // Output all decoded digits (typically 10 for 90-bit format)
+    // First 2 digits are usually "03" (format identifier)
+    // Remaining 8 digits are the encoded card data
+    card_no = all_digits;
     colour = "None";
-    return true;
-  } else if (cheap_valid && cheap_result.length() == 8 && starts_with_invalid) {
-    ESP_LOGD("paxton", "90-bit: Sequential decoder result '%s' rejected (starts with 01/02/03), trying Switch2 Fob decoder",
-             cheap_result.c_str());
-  }
 
-  // Try Switch2 Fob-style interleaved decoding (for official Paxton 90-bit cards)
-  // Discovered pattern: positions [35,40,45,55,50,25,35,30] from analysis of real cards
-  std::vector<int> fob_positions = {35, 40, 45, 55, 50, 25, 35, 30};
-  std::string fob_result;
-  bool fob_valid = true;
+    ESP_LOGI("paxton", "90-bit: Decoded raw digits: %s (parity %s)",
+             card_no.c_str(), parity_ok ? "OK" : "FAIL");
+    ESP_LOGW("paxton", "90-bit: NOTE - Raw digits differ from printed card number due to Paxton encoding");
 
-  for (int pos : fob_positions) {
-    if (pos + 3 < n - 10) {
-      int b0 = bits_[pos];
-      int b1 = bits_[pos+1];
-      int b2 = bits_[pos+2];
-      int b3 = bits_[pos+3];
-      int dval = 8*b3 + 4*b2 + 2*b1 + 1*b0;  // LSB first
-
-      if (dval <= 9) {
-        fob_result.push_back(char('0' + dval));
-      } else {
-        fob_valid = false;
-        break;
-      }
-    } else {
-      fob_valid = false;
-      break;
-    }
-  }
-
-  if (fob_valid && fob_result.length() == 8) {
-    ESP_LOGI("paxton", "90-bit: Switch2 Fob-style decoder succeeded: %s", fob_result.c_str());
-    card_no = fob_result;
-    colour = "None";
     return true;
   }
 
-  // Try proper Net2 decoder with parity checking (from Paxtogeddon)
-  // 90-bit format might be extended Net2, try different start positions
-  for (int start : {10, 11, 12, 13}) {
-    for (int digits : {8, 9, 10}) {
-      if (parse_net2_proper_(card_no, start, digits)) {
-        ESP_LOGI("paxton", "90-bit: Net2 parity decoder succeeded at start=%d, digits=%d: %s",
-                 start, digits, card_no.c_str());
-        colour = "None";
-        return true;
-      }
-    }
-  }
-
-  // Try adaptive BCD as fallback
-  if (try_adaptive_bcd_(card_no)) {
-    ESP_LOGI("paxton", "90-bit: Adaptive BCD succeeded: %s", card_no.c_str());
-    colour = "None";
-    return true;
-  }
-
-  // Return the first simple result if adaptive failed
-  if (!results.empty()) {
-    card_no = results[0].card;
-    colour = "None";
-    ESP_LOGW("paxton", "90-bit: Using first simple result: %s (may be incorrect!)", card_no.c_str());
-    return true;
-  }
-
-  ESP_LOGW("paxton", "90-bit: No valid decoder found. Raw bits published to raw_bits sensor.");
+  ESP_LOGW("paxton", "90-bit: Failed to decode (got %zu digits)", all_digits.length());
   return false;
 }
 
@@ -548,7 +470,23 @@ void PaxtonReader::loop() {
   if (bit_count_ > 0) {
     if ((micros() - last_edge_us_) > frame_gap_us) {  // frame complete
       processing_ = true;
-      const uint16_t n = bit_count_;
+      uint16_t n = bit_count_;
+
+      // Handle double-reads: if we got exactly 2x the expected bits, use first half
+      if (n == net2_bits * 2) {
+        ESP_LOGD("paxton", "Detected double-read (150 bits), using first 75");
+        n = net2_bits;
+        bit_count_ = n;
+      } else if (n == switch2_bits * 2) {
+        ESP_LOGD("paxton", "Detected double-read (440 bits), using first 220");
+        n = switch2_bits;
+        bit_count_ = n;
+      } else if (n == paxton90_bits * 2) {
+        ESP_LOGD("paxton", "Detected double-read (180 bits), using first 90");
+        n = paxton90_bits;
+        bit_count_ = n;
+      }
+
       log_bits_preview_(n);
 
       // Build bitstring for later publishing
@@ -577,7 +515,9 @@ void PaxtonReader::loop() {
       } else if (n == paxton90_bits) {
         ok = parse_paxton90_(card_no, colour, bin);
         if (ok) {
-          publish_success_(card_no, "Paxton 90-bit", colour, n, bin);
+          // Note: 90-bit cards output raw encoded digits (not actual card number)
+          // Paxton uses proprietary encoding - raw digits can still be used for card identification
+          publish_success_(card_no, "Paxton 90-bit (raw)", colour, n, bin);
         } else {
           publish_error_("Paxton 90-bit parse fail (see raw_bits sensor)");
         }
